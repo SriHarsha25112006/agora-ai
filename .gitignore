@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+ppt_text.txt
+read_pptx.py
