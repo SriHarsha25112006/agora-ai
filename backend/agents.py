@@ -24,11 +24,11 @@ if GROQ_API_KEY:
 
 # Groq Model Mappings
 GROQ_MODELS = {
-    "ethical": "gemma2-9b-it",
-    "legal": "llama-3.3-70b-versatile",
-    "economic": "llama-3.1-8b-instant",
-    "social": "mixtral-8x7b-32768",
-    "consensus": "llama3-70b-8192",
+    "ethical": "llama-3.3-70b-versatile",
+    "legal": "llama-3.1-8b-instant",
+    "economic": "llama-3.3-70b-versatile",
+    "social": "llama-3.1-8b-instant",
+    "consensus": "llama-3.3-70b-versatile",
     "clarifier": "llama-3.1-8b-instant",
 }
 
