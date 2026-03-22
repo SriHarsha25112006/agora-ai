@@ -1,18 +1,39 @@
 import asyncio
 import os
 import yaml
-from ollama import AsyncClient
 from typing import AsyncGenerator
 
 # ============================================================
-# Ollama client — runs 100% locally, zero API keys needed
+# Local Ollama client setup
 # ============================================================
-OLLAMA_HOST = "http://localhost:11434"
-ollama_client = AsyncClient(host=OLLAMA_HOST)
+from ollama import AsyncClient as OllamaAsyncClient
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+ollama_client = OllamaAsyncClient(host=OLLAMA_HOST)
 
 # ============================================================
-# Agent configurations — each agent uses a DIFFERENT model
-# from a different AI company
+# Cloud Groq API Setup (Fallback)
+# ============================================================
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+groq_client = None
+if GROQ_API_KEY:
+    try:
+        from groq import AsyncGroq
+        groq_client = AsyncGroq(api_key=GROQ_API_KEY)
+    except ImportError:
+        pass
+
+# Groq Model Mappings
+GROQ_MODELS = {
+    "ethical": "gemma2-9b-it",
+    "legal": "llama-3.3-70b-versatile",
+    "economic": "llama-3.1-8b-instant",
+    "social": "mixtral-8x7b-32768",
+    "consensus": "llama3-70b-8192",
+    "clarifier": "llama-3.1-8b-instant",
+}
+
+# ============================================================
+# Agent configurations
 # ============================================================
 AGENTS = {
     "ethical": {
@@ -71,7 +92,7 @@ AGENTS = {
         "icon": "📝",
         "color": "#ffffff",
         "short": "CLARIFIER",
-        "model": "qwen2.5:3b",  # Using Qwen 2.5 for text rewriting
+        "model": "qwen2.5:3b",
         "model_label": "Qwen 2.5 · Alibaba",
         "model_icon": "🌸",
     },
@@ -89,8 +110,6 @@ def _build_system_prompt(agent_key: str, mode: str, personality: str) -> str:
     mode_desc = _PROMPT_CONFIG.get("modes", {}).get(mode, _PROMPT_CONFIG["modes"]["debate"])
     
     raw_prompt = _PROMPT_CONFIG.get("agents", {}).get(agent_key, "You are a helpful AI.")
-    
-    # Format the prompt with context and tone
     return raw_prompt.replace("{mode_ctx}", mode_desc).replace("{tone}", tone_desc)
 
 
@@ -114,7 +133,7 @@ def _build_user_message(agent_key: str, topic: str, mode: str, context: str = ""
 
 
 # ============================================================
-# Streaming LLM call via Ollama
+# Streaming LLM call (Groq API or Ollama Local)
 # ============================================================
 async def call_agent_stream(
     agent_key: str,
@@ -123,39 +142,53 @@ async def call_agent_stream(
     personality: str,
     context: str = "",
 ) -> AsyncGenerator[str, None]:
-    """Stream response chunks from the agent's assigned Ollama model."""
+    """Stream response chunks from the agent's assigned model."""
     agent_info = AGENTS[agent_key]
     system_prompt = _build_system_prompt(agent_key, mode, personality)
     user_message = _build_user_message(agent_key, topic, mode, context)
 
     try:
-        # Check available models and fallback if missing
-        local_models = await ollama_client.list()
-        available_names = [m["model"] for m in local_models.get("models", [])]
-        model_name = agent_info["model"]
-        
-        if not any(model_name.split(":")[0] in a for a in available_names):
-            model_name = available_names[0] if available_names else "llama3.2:3b"
+        if groq_client:
+            model_name = GROQ_MODELS.get(agent_key, "llama-3.1-8b-instant")
+            stream = await groq_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                stream=True,
+                temperature=0.75,
+                max_tokens=650,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content if (chunk.choices and chunk.choices[0].delta.content) else ""
+                if content:
+                    yield content
 
-        stream = await ollama_client.chat(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            stream=True,
-            options={
-                "num_predict": 650,
-                "temperature": 0.75,
-                "top_p": 0.9,
-            },
-        )
-        async for chunk in stream:
-            content = chunk.get("message", {}).get("content", "")
-            if content:
-                yield content
+        else:
+            # Check available models and fallback if missing
+            local_models = await ollama_client.list()
+            available_names = [m["model"] for m in local_models.get("models", [])]
+            model_name = agent_info["model"]
+            
+            if not any(model_name.split(":")[0] in a for a in available_names):
+                model_name = available_names[0] if available_names else "llama3.2:3b"
+
+            stream = await ollama_client.chat(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                stream=True,
+                options={"num_predict": 650, "temperature": 0.75, "top_p": 0.9},
+            )
+            async for chunk in stream:
+                content = chunk.get("message", {}).get("content", "")
+                if content:
+                    yield content
     except Exception as e:
-        yield f"\n\n[Agent Error: Could not connect or infer from model '{agent_info['model']}': {str(e)}]"
+        yield f"\n\n[Agent Error: Could not connect or infer: {str(e)}]"
 
 
 # ============================================================
@@ -172,7 +205,6 @@ async def call_agent_refine_stream(
     """Streaming refinement round with full debate context."""
     agent_info = AGENTS[agent_key]
     system_prompt = _build_system_prompt(agent_key, mode, personality)
-
     perspective_name = agent_info["role"]
 
     user_message = f"""Topic: {topic}
@@ -186,30 +218,44 @@ Other perspectives presented in the debate:
 Now REFINE your argument in light of the other perspectives. Address their concerns where relevant, strengthen your core thesis, and adapt your position to offer a more nuanced view."""
 
     try:
-        # Check available models and fallback if missing
-        local_models = await ollama_client.list()
-        available_names = [m["model"] for m in local_models.get("models", [])]
-        model_name = agent_info["model"]
-        
-        if not any(model_name.split(":")[0] in a for a in available_names):
-            model_name = available_names[0] if available_names else "llama3.2:3b"
+        if groq_client:
+            model_name = GROQ_MODELS.get(agent_key, "llama-3.1-8b-instant")
+            stream = await groq_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                stream=True,
+                temperature=0.70,
+                max_tokens=650,
+            )
+            async for chunk in stream:
+                content = chunk.choices[0].delta.content if chunk.choices[0].delta.content else ""
+                if content:
+                    yield content
 
-        stream = await ollama_client.chat(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            stream=True,
-            options={
-                "num_predict": 650,
-                "temperature": 0.70,
-                "top_p": 0.9,
-            },
-        )
-        async for chunk in stream:
-            content = chunk.get("message", {}).get("content", "")
-            if content:
-                yield content
+        else:
+            # Check available models and fallback if missing
+            local_models = await ollama_client.list()
+            available_names = [m["model"] for m in local_models.get("models", [])]
+            model_name = agent_info["model"]
+            
+            if not any(model_name.split(":")[0] in a for a in available_names):
+                model_name = available_names[0] if available_names else "llama3.2:3b"
+
+            stream = await ollama_client.chat(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                stream=True,
+                options={"num_predict": 650, "temperature": 0.70, "top_p": 0.9},
+            )
+            async for chunk in stream:
+                content = chunk.get("message", {}).get("content", "")
+                if content:
+                    yield content
     except Exception as e:
-        yield f"\n\n[Agent Error: Could not connect or infer from model '{agent_info['model']}': {str(e)}]"
+        yield f"\n\n[Agent Error: Could not connect or infer: {str(e)}]"
