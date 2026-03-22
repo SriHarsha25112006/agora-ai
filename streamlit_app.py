@@ -47,7 +47,7 @@ h1, h2, h3 {
 }
 
 /* Custom Primary Button */
-.stButton > button {
+button[kind="primary"] {
     background: linear-gradient(135deg, #f59e0b, #ec4899) !important;
     color: white !important;
     border: none !important;
@@ -58,9 +58,26 @@ h1, h2, h3 {
     box-shadow: 0 0 20px rgba(245, 158, 11, 0.25) !important;
     width: 100% !important;
 }
-.stButton > button:hover {
+button[kind="primary"]:hover {
     transform: translateY(-2px);
     box-shadow: 0 0 30px rgba(236, 72, 153, 0.4) !important;
+}
+
+/* Custom Secondary Button (Examples) */
+button[kind="secondary"] {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #9090b0 !important;
+    font-weight: 600 !important;
+    border-radius: 20px !important;
+    padding: 0.25rem 1rem !important;
+    min-height: 2rem !important;
+    transition: all 0.2s ease !important;
+}
+button[kind="secondary"]:hover {
+    color: white !important;
+    border-color: rgba(236, 72, 153, 0.4) !important;
+    background: rgba(236, 72, 153, 0.15) !important;
 }
 
 /* Agent Chat Messages Container */
@@ -130,7 +147,19 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-topic = st.text_area("Debate Topic or Situation", placeholder="e.g., Should universal basic income be implemented globally?", height=120)
+def set_topic(new_topic):
+    st.session_state.topic = new_topic
+
+if "topic" not in st.session_state:
+    st.session_state.topic = ""
+
+topic = st.text_area("Debate Topic or Situation", key="topic", placeholder="e.g., Should universal basic income be implemented globally?", height=120)
+
+st.markdown("<p style='font-size:0.8rem; color:#9090b0; margin-bottom: 5px; margin-top: -10px;'>Try an example:</p>", unsafe_allow_html=True)
+eg1, eg2, eg3 = st.columns(3)
+eg1.button("UBI Worldwide?", on_click=set_topic, args=("Should universal basic income be implemented globally?",), use_container_width=True, type="secondary")
+eg2.button("AI Regulation?", on_click=set_topic, args=("Is strict government regulation of Artificial Intelligence necessary?",), use_container_width=True, type="secondary")
+eg3.button("Mars Colonization?", on_click=set_topic, args=("Should humanity prioritize Mars colonization over solving Earth's immediate crises?",), use_container_width=True, type="secondary")
 
 col1, col2 = st.columns(2)
 with col1:
